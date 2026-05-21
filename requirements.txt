@@ -2,7 +2,6 @@ torch
 torchvision
 transformers
 Pillow
-opencv-python
-matplotlib
-numpy
 streamlit
+accelerate
+sentencepiece

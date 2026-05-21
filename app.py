@@ -18,7 +18,7 @@ if uploaded:
 
     col1, col2 = st.columns(2)
     with col1:
-        st.image(tmp_path, caption="Input", use_column_width=True)
+        st.image(tmp_path, caption="Input", use_container_width=True)
 
     if st.button("Analyze"):
         with st.spinner("Detecting objects..."):
@@ -30,7 +30,7 @@ if uploaded:
         output_path = visualize(tmp_path, detections)
 
         with col2:
-            st.image(output_path, caption="Detected Objects", use_column_width=True)
+            st.image(output_path, caption="Detected Objects", use_container_width=True)
 
         st.subheader("Detected Objects")
         for d in detections:
