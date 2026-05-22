@@ -5,3 +5,4 @@ Pillow
 streamlit
 accelerate
 sentencepiece
+opencv-python
