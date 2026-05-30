@@ -1,23 +1,16 @@
 """
 app_blind.py — Visual Assistant for the Visually Impaired
 Run with: streamlit run app_blind.py
-
-Features:
-- Live webcam feed with auto-narration every N seconds
-- Speaks scene description aloud via pyttsx3
-- Voice or text Q&A — asks BLIP, speaks the answer back
-- High-contrast, large-text accessible UI
 """
-import subprocess
-import sys
+
 import streamlit as st
 import cv2
 import tempfile
 import os
+import sys
 import time
-import threading
+import subprocess
 from PIL import Image
-import numpy as np
 
 from visiongpt.pipeline.detector import detect
 from visiongpt.pipeline.scene_graph import build_scene_graph
@@ -37,12 +30,8 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    /* Large readable text throughout */
-    html, body, [class*="css"] {
-        font-size: 18px !important;
-    }
+    html, body, [class*="css"] { font-size: 18px !important; }
 
-    /* Big prominent buttons */
     .stButton > button {
         font-size: 22px !important;
         font-weight: 700 !important;
@@ -51,22 +40,11 @@ st.markdown("""
         width: 100% !important;
         margin-bottom: 12px !important;
     }
-
-    /* Primary action button — high contrast green */
     .stButton > button[kind="primary"] {
         background-color: #1a7a1a !important;
         color: #ffffff !important;
         border: 3px solid #0f5c0f !important;
     }
-
-    /* Stop button — high contrast red */
-    .stop-btn > button {
-        background-color: #cc0000 !important;
-        color: #ffffff !important;
-        border: 3px solid #990000 !important;
-    }
-
-    /* Narration box */
     .narration-box {
         background-color: #1a1a2e;
         color: #e0e0ff;
@@ -78,8 +56,6 @@ st.markdown("""
         margin: 16px 0;
         line-height: 1.6;
     }
-
-    /* Answer box */
     .answer-box {
         background-color: #1a2e1a;
         color: #d0f0d0;
@@ -91,9 +67,7 @@ st.markdown("""
         margin: 16px 0;
         line-height: 1.6;
     }
-
-    /* Warning box */
-    .warning-box {
+    .listening-box {
         background-color: #2e1a00;
         color: #ffd080;
         font-size: 22px !important;
@@ -102,40 +76,32 @@ st.markdown("""
         border-radius: 14px;
         border-left: 8px solid #ff9800;
         margin: 12px 0;
+        text-align: center;
     }
-
-    /* Section headers */
     h1 { font-size: 36px !important; }
     h2 { font-size: 28px !important; }
     h3 { font-size: 24px !important; }
-
-    /* Text input larger */
     .stTextInput > div > div > input {
         font-size: 20px !important;
         padding: 14px !important;
-    }
-
-    /* Slider label */
-    .stSlider label {
-        font-size: 18px !important;
     }
 </style>
 """, unsafe_allow_html=True)
 
 
-# ── Session state defaults ─────────────────────────────────────────────────
+# ── Session state ──────────────────────────────────────────────────────────
 
 def _init_state():
     defaults = {
-        "running":          False,
-        "last_narration":   "",
-        "last_frame_path":  None,
-        "speak_thread":     None,
-        "vqa_loaded":       False,
-        "last_answer":      "",
-        "last_question":    "",
-        "detections":       [],
-        "relationships":    [],
+        "running":         False,
+        "last_narration":  "",
+        "last_frame_path": None,
+        "vqa_loaded":      False,
+        "last_answer":     "",
+        "last_question":   "",
+        "detections":      [],
+        "relationships":   [],
+        "listening":       False,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -147,7 +113,7 @@ _init_state()
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 def speak_async(text: str):
-    """Launch speak_worker.py as a fully detached process."""
+    """Fully detached subprocess — survives Streamlit reruns."""
     if not text or not text.strip():
         return
     worker = os.path.join(os.path.dirname(os.path.abspath(__file__)), "speak_worker.py")
@@ -158,22 +124,48 @@ def speak_async(text: str):
         creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
     )
 
-def analyse_frame(frame_bgr, frame_width: int):
-    """Run detection + scene graph on a raw BGR frame. Returns (dets, rels, narration)."""
-    rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-    pil_img = Image.fromarray(rgb)
 
+def analyse_frame(frame_bgr, frame_width: int):
+    rgb     = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+    pil_img = Image.fromarray(rgb)
     with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
         pil_img.save(tmp.name)
         tmp_path = tmp.name
-
     try:
-        dets = detect(tmp_path)
-        rels = build_scene_graph(dets)
+        dets      = detect(tmp_path)
+        rels      = build_scene_graph(dets)
         narration = build_narration(dets, rels, frame_width=frame_width)
         return dets, rels, narration, tmp_path
     except Exception as e:
         return [], [], narrate_error(str(e)), tmp_path
+
+
+def run_voice_qa():
+    """
+    Listen via mic → run BLIP → return (question, answer).
+    If listening fails, returns (None, error_message).
+    """
+    from visiongpt.voice.listener import listen_with_status
+
+    text, status = listen_with_status()
+
+    if status == "timeout":
+        return None, "I didn't hear anything. Please try again."
+    if status == "unclear":
+        return None, "I couldn't understand that. Please speak clearly and try again."
+    if status == "error":
+        return None, "Speech recognition unavailable. Check your internet connection."
+
+    if not st.session_state["vqa_loaded"]:
+        load_vqa_model()
+        st.session_state["vqa_loaded"] = True
+
+    if not st.session_state["last_frame_path"] or \
+       not os.path.exists(st.session_state["last_frame_path"]):
+        return text, "No frame captured yet. Start the camera first."
+
+    answer = answer_question(st.session_state["last_frame_path"], text)
+    return text, answer
 
 
 # ── UI Layout ──────────────────────────────────────────────────────────────
@@ -182,13 +174,11 @@ st.title("👁️ Visual Assistant")
 st.markdown("#### Helping you understand what's around you")
 st.divider()
 
-# Two columns: controls left, camera right
 col_ctrl, col_cam = st.columns([1, 2])
 
 with col_ctrl:
     st.markdown("### Controls")
 
-    # Narration interval slider
     interval = st.slider(
         "Describe scene every (seconds)",
         min_value=2, max_value=10, value=4, step=1
@@ -196,19 +186,14 @@ with col_ctrl:
 
     st.markdown("---")
 
-    # Start / Stop buttons
     if not st.session_state["running"]:
         if st.button("▶ Start — Describe my surroundings", type="primary"):
             st.session_state["running"] = True
             st.rerun()
     else:
-        with st.container():
-            st.markdown('<div class="stop-btn">', unsafe_allow_html=True)
-            if st.button("⏹ Stop", type="secondary"):
-                st.session_state["running"] = False
-                get_speaker().stop()
-                st.rerun()
-            st.markdown('</div>', unsafe_allow_html=True)
+        if st.button("⏹ Stop"):
+            st.session_state["running"] = False
+            st.rerun()
 
     st.markdown("---")
 
@@ -225,39 +210,71 @@ with col_ctrl:
             unsafe_allow_html=True
         )
 
-    # Repeat last narration button
     if st.session_state["last_narration"]:
         if st.button("🔁 Repeat last description"):
             speak_async(st.session_state["last_narration"])
 
     st.markdown("---")
 
-    # ── Q&A section ──
+    # ── Q&A section ───────────────────────────────────────────────────────
     st.markdown("### ❓ Ask about the scene")
 
-    question = st.text_input(
+    # Voice input button
+    if not st.session_state["listening"]:
+        if st.button("🎤 Ask with voice"):
+            st.session_state["listening"]      = True
+            st.session_state["last_answer"]    = ""
+            st.session_state["last_question"]  = ""
+            st.rerun()
+    else:
+        # Show listening indicator
+        st.markdown(
+            '<div class="listening-box">🎤 Listening... speak your question now</div>',
+            unsafe_allow_html=True
+        )
+        speak_async("Listening. Please ask your question.")
+
+        # Capture + answer
+        question, answer = run_voice_qa()
+
+        # Always reset listening so button reappears
+        st.session_state["listening"]      = False
+        st.session_state["last_question"]  = question or ""
+        st.session_state["last_answer"]    = answer
+        speak_async(answer)
+        st.rerun()
+
+    # Text input fallback
+    st.markdown("##### Or type your question")
+    question_text = st.text_input(
         "Type your question",
         placeholder="What colour is the chair? Is there a person?",
-        key="question_input"
+        label_visibility="collapsed",
+        key="question_input",
     )
 
-    if st.button("Ask") and question.strip():
-        if st.session_state["last_frame_path"] and os.path.exists(st.session_state["last_frame_path"]):
+    if st.button("Ask") and question_text.strip():
+        if st.session_state["last_frame_path"] and \
+           os.path.exists(st.session_state["last_frame_path"]):
             with st.spinner("Thinking..."):
                 if not st.session_state["vqa_loaded"]:
                     load_vqa_model()
                     st.session_state["vqa_loaded"] = True
-                answer = answer_question(st.session_state["last_frame_path"], question)
+                answer = answer_question(
+                    st.session_state["last_frame_path"], question_text
+                )
+                st.session_state["last_question"] = question_text
                 st.session_state["last_answer"]   = answer
-                st.session_state["last_question"]  = question
                 speak_async(answer)
         else:
             st.warning("No frame captured yet — start the camera first.")
 
+    # Answer display
     if st.session_state["last_answer"]:
+        q_display = st.session_state["last_question"] or "—"
         st.markdown(
             f'<div class="answer-box">'
-            f'<b>Q:</b> {st.session_state["last_question"]}<br>'
+            f'<b>Q:</b> {q_display}<br>'
             f'<b>A:</b> {st.session_state["last_answer"]}'
             f'</div>',
             unsafe_allow_html=True
@@ -279,15 +296,14 @@ with col_cam:
         cap = cv2.VideoCapture(0)
 
         if not cap.isOpened():
-            st.error("Could not open webcam. Make sure your camera is connected.")
+            st.error("Could not open webcam.")
             st.session_state["running"] = False
         else:
             speak_async("Visual assistant started. Analysing your surroundings.")
 
             frame_count   = 0
-            last_analysed = 0.0   # timestamp of last full analysis
-            FRAME_SKIP    = 3     # display every Nth frame for smoothness
-
+            last_analysed = 0.0
+            FRAME_SKIP    = 3
             detections    = []
 
             while st.session_state["running"]:
@@ -299,30 +315,27 @@ with col_cam:
                 frame_count += 1
                 now = time.time()
 
-                # ── Full analysis at set interval ──
                 if now - last_analysed >= interval:
                     dets, rels, narration, tmp_path = analyse_frame(frame, frame.shape[1])
                     detections = dets
 
-                    # Save frame path for Q&A
                     if st.session_state["last_frame_path"] and \
                        os.path.exists(st.session_state["last_frame_path"]):
                         try:
                             os.unlink(st.session_state["last_frame_path"])
                         except OSError:
                             pass
+
                     st.session_state["last_frame_path"] = tmp_path
 
-                    # Only speak if narration changed
                     if narration != st.session_state["last_narration"]:
                         st.session_state["last_narration"] = narration
                         speak_async(narration)
 
-                    st.session_state["detections"]     = dets
-                    st.session_state["relationships"]  = rels
+                    st.session_state["detections"]    = dets
+                    st.session_state["relationships"] = rels
                     last_analysed = now
 
-                # ── Draw bounding boxes ──
                 COLORS = [
                     (0, 200, 100), (0, 120, 255), (255, 160, 0),
                     (220, 0, 220), (0, 220, 220), (255, 80, 80),
@@ -332,16 +345,15 @@ with col_cam:
                     x1, y1, x2, y2 = [int(v) for v in det["box"]]
                     label = f"{det['label']} {det['score']:.2f}"
                     cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-                    cv2.rectangle(frame, (x1, y1 - 28), (x1 + len(label) * 11, y1), (0,0,0), -1)
+                    cv2.rectangle(frame, (x1, y1 - 28),
+                                  (x1 + len(label) * 11, y1), (0, 0, 0), -1)
                     cv2.putText(frame, label, (x1 + 4, y1 - 8),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
-                # ── Show frame ──
                 if frame_count % FRAME_SKIP == 0:
                     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     frame_placeholder.image(rgb, channels="RGB", use_container_width=True)
 
-                # ── Object list below camera ──
                 if detections:
                     obj_text = " · ".join(
                         f"`{d['label']}` {d['score']:.2f}" for d in detections
