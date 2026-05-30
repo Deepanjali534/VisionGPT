@@ -1,63 +1,57 @@
-# VisionGPT — Intelligent Object Interaction Agent
+# VisionGPT — Visual Assistant for the Visually Impaired
 
-Most object detectors just tell you *"there's a car"*. VisionGPT tells you *"there are 12 cars on the highway, 3 of them near each other in the left lane"* — and then answers your questions about it.
+VisionGPT started as an intelligent object detection agent. It has since been rebuilt into a real-world assistive tool — a visual assistant that describes your surroundings out loud and answers your questions about what it sees.
 
-
+> Point your camera at the world. VisionGPT tells you what's there.
 
 ---
 
-## What it can do
+## What it does
 
--  **Detect objects** in any photo or live webcam feed
--  **Understand relationships** between objects — "car near truck", "person on chair"
--  **Answer questions** about images in plain English — "How many cars are on the road?"
--  **Live webcam detection** — real time object detection from your laptop camera
+- **Describes your surroundings aloud** — "I can see a person on your left, close to a chair. There's also a car ahead of you."
+- **Live webcam narration** — analyses the scene every few seconds and speaks only when something changes
+- **Voice Q&A** — ask a question out loud, get a spoken answer back — "What colour is the chair?" → "brown"
+- **Text Q&A fallback** — type questions if you prefer
+- **High-contrast accessible UI** — large text, large buttons, keyboard-friendly layout
 
 ---
 
 ## Models used
 
-| Task | Model | Size |
-|---|---|---|
-| Object detection | [facebook/detr-resnet-50](https://huggingface.co/facebook/detr-resnet-50) 
-| Visual question answering | [Salesforce/blip-vqa-base](https://huggingface.co/Salesforce/blip-vqa-base) 
+| Task | Model |
+| ---- | ----- |
+| Object detection | [facebook/detr-resnet-50](https://huggingface.co/facebook/detr-resnet-50) |
+| Visual question answering | [Salesforce/blip-vqa-base](https://huggingface.co/Salesforce/blip-vqa-base) |
 
-
+No model training involved — both models are pretrained and loaded directly from HuggingFace.
 
 ---
 
 ## Project structure
 
 ```
-visiongpt/
+VisionGPT/
 │
-├── visiongpt/                  ← all Python source code
-│   ├── __init__.py
+├── visiongpt/
 │   ├── models/
-│   │   ├── __init__.py
-│   │   └── detr.py             # loads DETR model + device setup
+│   │   └── detr.py               # loads DETR + device setup
 │   ├── pipeline/
+│   │   ├── detector.py           # image → detected objects
+│   │   ├── scene_graph.py        # objects → spatial relationships
+│   │   ├── vqa.py                # image + question → answer
+│   │   └── narrator.py           # detections → natural spoken sentences
+│   ├── tts/
 │   │   ├── __init__.py
-│   │   ├── detector.py         # image → detected objects
-│   │   ├── scene_graph.py      # objects → spatial relationships
-│   │   └── vqa.py              # image + question → answer
-│   └── utils/
+│   │   └── speaker.py            # TTS wrapper (pyttsx3 via subprocess)
+│   └── voice/
 │       ├── __init__.py
-│       └── visualizer.py       # draws bounding boxes, saves result
+│       └── listener.py           # mic input → text (SpeechRecognition)
 │
-├── test_images/                ← sample images for testing
-│   ├── iitg4.jpg
-│   ├── image.png               ← highway car detection example
-│   └── image2.png
-│
-├── outputs/                    ← saved result images go here
-│
-├── app.py                      # Streamlit web UI (upload + webcam tabs)
-├── webcam.py                   # standalone live webcam detection
-├── main.py                     # CLI entry point
-├── config.py                   # model names, thresholds, paths
+├── app.py                        # original UI (upload image + webcam)
+├── app_blind.py                  # accessible UI for visually impaired
+├── speak_worker.py               # pyttsx3 worker (called as subprocess)
+├── config.py                     # model names, thresholds, paths
 ├── requirements.txt
-├── .gitignore
 └── README.md
 ```
 
@@ -66,9 +60,10 @@ visiongpt/
 ## Setup
 
 ### 1. Clone the repo
+
 ```bash
-git clone https://github.com/yourteam/visiongpt.git
-cd visiongpt
+git clone https://github.com/Deepanjali534/VisionGPT.git
+cd VisionGPT
 ```
 
 ### 2. Create and activate virtual environment
@@ -76,7 +71,7 @@ cd visiongpt
 **Windows:**
 ```bash
 python -m venv venv
-.\venv\Scripts\activate
+venv\Scripts\activate
 ```
 
 **Mac/Linux:**
@@ -85,78 +80,71 @@ python -m venv venv
 source venv/bin/activate
 ```
 
-You should see `(venv)` at the start of your terminal line.
-
 ### 3. Install dependencies
+
 ```bash
 pip install -r requirements.txt
 ```
-
-
 
 ---
 
 ## Usage
 
-### Web UI — upload image + live webcam
+### Visual Assistant (blind-friendly UI)
+
+```bash
+streamlit run app_blind.py
+```
+
+Opens at `http://localhost:8501`. Features:
+
+- Click **▶ Start** — camera opens, scene is described aloud every few seconds
+- Click **🎤 Ask with voice** — speak a question, hear the answer
+- Or type a question in the text box and click **Ask**
+- Click **🔁 Repeat** to hear the last description or answer again
+- Use the slider to control how often the scene is described (2–10 seconds)
+
+### Original object detection UI
+
 ```bash
 streamlit run app.py
 ```
 
-Opens at `http://localhost:8501` in your browser. Two tabs:
-
-**  Upload Image tab**
-1. Upload any photo (JPG or PNG)
-2. Click **Analyze** — see detected objects with coloured bounding boxes and scene relationships
-3. Type a question like `"How many cars are on the road?"` → click **Ask** → get a text answer
-
-**🎥 Live Webcam tab**
-1. Click **▶ Start Webcam** — your camera opens inside the browser
-2. Move objects in front of the camera — boxes appear in real time
-3. Click **⏹ Stop Webcam** to end the session
-
-### Standalone webcam (runs outside browser)
-```bash
-python webcam.py
-```
-Opens a dedicated camera window with live detection. Press **Q** to quit.
-
-### CLI
-```bash
-python main.py test_images/image.png
-python main.py test_images/image.png --question "How many cars are on the road?"
-```
+Upload any image or use the live webcam tab — see detected objects with bounding boxes, spatial relationships, and text-based Q&A.
 
 ---
 
-## Example output
+## How it works
 
-Input image — highway with multiple vehicles (`test_images/image.png`):
-
-| | |
-|---|---|
-| **Input** | Real highway photo with cars and trucks |
-| **Detected** | 12 cars, 1 truck — each with a coloured bounding box |
-| **Relationships** | car near car · truck near car |
-| **VQA answer** | "How many cars are on the road?" → `"12"` |
-
-The model correctly identified all vehicles on the highway and drew tight bounding boxes around each one — even the smaller cars in the distance.
+```
+Webcam frame
+      ↓
+DETR detects every object → bounding boxes
+      ↓
+Scene graph finds spatial relationships → "person near chair"
+      ↓
+Narrator builds a natural sentence → "I can see a person on your left, near a chair."
+      ↓
+pyttsx3 speaks it aloud (offline, no API key needed)
+      ↓
+User asks a question (voice or text)
+      ↓
+BLIP answers from the image → spoken back via pyttsx3
+```
 
 ---
 
 ## Configuration
 
-All settings live in `config.py` — change them without touching any other file:
+All settings live in `config.py`:
 
 ```python
-DETR_MODEL_NAME      = "facebook/detr-resnet-50"
-BLIP2_MODEL_NAME     = "Salesforce/blip-vqa-base"
-DETECTION_THRESHOLD  = 0.9       # minimum confidence to show a detection
-OUTPUT_DIR           = "outputs"
-NEAR_THRESHOLD       = 150       # pixel distance to count as "near"
+DETR_MODEL_NAME     = "facebook/detr-resnet-50"
+BLIP2_MODEL_NAME    = "Salesforce/blip-vqa-base"
+DETECTION_THRESHOLD = 0.9    # lower to 0.7 if objects are being missed
+NEAR_THRESHOLD      = 150    # pixel distance to count as "near"
+OUTPUT_DIR          = "outputs"
 ```
-
-**Tip:** Lower `DETECTION_THRESHOLD` to `0.7` if the model is missing objects. Raise it to `0.95` to reduce false detections.
 
 ---
 
@@ -172,42 +160,6 @@ accelerate
 sentencepiece
 timm
 opencv-python
+pyttsx3
+SpeechRecognition
 ```
-
----
-
-## How it works — simple version
-
-```
-Your image or webcam frame
-        ↓
-DETR scans it → finds every object → draws bounding boxes
-        ↓
-Scene Graph looks at box positions → "car near truck"
-        ↓
-BLIP looks at image + your question → plain English answer
-        ↓
-Streamlit shows everything in the browser
-```
-
-No model training involved — both DETR and BLIP are pretrained models loaded directly from HuggingFace. The scene graph logic is pure Python math on bounding box positions.
-
----
-
-## Applications
-
-- **Traffic monitoring** — count vehicles, detect congestion, identify object types on roads
-- **Home automation** — understand room context for smart home triggers
-- **Robotics** — spatial reasoning for object navigation and manipulation
-- **AR perception** — real time scene understanding for augmented reality overlays
-
----
-
-## Team
-
-| Role | Files owned |
-|---|---|
-| ML Core | `visiongpt/models/detr.py`, `visiongpt/pipeline/detector.py` |
-| Scene + VQA | `visiongpt/pipeline/scene_graph.py`, `visiongpt/pipeline/vqa.py` |
-| Visualizer | `visiongpt/utils/visualizer.py`, `main.py`, `config.py` |
-| UI + Docs | `app.py`, `webcam.py`, `README.md` |
