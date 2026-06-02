@@ -16,6 +16,8 @@ from visiongpt.pipeline.detector import detect
 from visiongpt.pipeline.scene_graph import build_scene_graph
 from visiongpt.pipeline.vqa import load_vqa_model, answer_question
 from visiongpt.pipeline.narrator import build_narration, narrate_error
+from visiongpt.pipeline.depth import load_depth_model, estimate_distances
+from visiongpt.pipeline.hazard import check_hazards
 from visiongpt.tts.speaker import get_speaker
 
 # ── Page config ────────────────────────────────────────────────────────────
@@ -133,6 +135,7 @@ def analyse_frame(frame_bgr, frame_width: int):
         tmp_path = tmp.name
     try:
         dets      = detect(tmp_path)
+        dets      = estimate_distances(tmp_path, dets)
         rels      = build_scene_graph(dets)
         narration = build_narration(dets, rels, frame_width=frame_width)
         return dets, rels, narration, tmp_path
@@ -300,6 +303,7 @@ with col_cam:
             st.session_state["running"] = False
         else:
             speak_async("Visual assistant started. Analysing your surroundings.")
+            load_depth_model()
 
             frame_count   = 0
             last_analysed = 0.0
@@ -331,6 +335,12 @@ with col_cam:
                     if narration != st.session_state["last_narration"]:
                         st.session_state["last_narration"] = narration
                         speak_async(narration)
+
+                    # ── Hazard check ──
+                    hazard_warnings = check_hazards(dets, frame_width=frame.shape[1])
+                    for warning in hazard_warnings:
+                        speak_async(warning)
+                        st.session_state["last_narration"] = warning
 
                     st.session_state["detections"]    = dets
                     st.session_state["relationships"] = rels

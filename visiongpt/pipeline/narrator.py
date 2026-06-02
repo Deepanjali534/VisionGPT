@@ -1,19 +1,53 @@
+"""
+narrator.py — converts DETR detections + scene graph relationships
+into natural language sentences suitable for spoken output.
+
+Input format (from detector.py):
+    detections = [
+        {"label": "person", "score": 0.97, "box": [x1, y1, x2, y2], "distance": "close"},
+        {"label": "chair",  "score": 0.91, "box": [x1, y1, x2, y2], "distance": "far"},
+        ...
+    ]
+    "distance" key is optional — added by depth.py if loaded.
+
+Input format (from scene_graph.py):
+    relationships = ["person near chair", "car near truck", ...]
+
+Output:
+    A single natural language string ready to be spoken aloud.
+    e.g. "I can see a person close to you on your left, and a chair far ahead."
+"""
+
 from collections import Counter
 from typing import List, Dict
+
 
 PRIORITY_LABELS = {"person", "car", "truck", "bus", "bicycle", "motorcycle", "dog", "cat"}
 LOW_PRIORITY_LABELS = {"potted plant", "vase", "clock", "book", "bottle"}
 
 LABEL_ALIASES = {
-    "person": "person", "cell phone": "phone", "tv": "television",
-    "remote": "remote control", "potted plant": "plant",
-    "dining table": "table", "sports ball": "ball",
+    "person":       "person",
+    "cell phone":   "phone",
+    "tv":           "television",
+    "remote":       "remote control",
+    "potted plant": "plant",
+    "dining table": "table",
+    "sports ball":  "ball",
 }
 
-def _alias(label):
+# How distance labels read in a sentence
+DISTANCE_PHRASES = {
+    "close":  "very close to you",
+    "nearby": "nearby",
+    "far":    "in the distance",
+}
+
+
+def _alias(label: str) -> str:
     return LABEL_ALIASES.get(label, label)
 
-def _pluralise(word, count):
+
+def _pluralise(word: str, count: int) -> str:
     if count == 1:
         return word
     irregulars = {"person": "people", "child": "children", "knife": "knives"}
@@ -23,14 +57,16 @@ def _pluralise(word, count):
         return word + "es"
     return word + "s"
 
-def _count_phrase(label, count):
+
+def _count_phrase(label: str, count: int) -> str:
     aliased = _alias(label)
     if count == 1:
         article = "an" if aliased[0].lower() in "aeiou" else "a"
         return f"{article} {aliased}"
     return f"{count} {_pluralise(aliased, count)}"
 
-def _side_hint(box, frame_width=640):
+
+def _side_hint(box: List[float], frame_width: int = 640) -> str:
     cx = (box[0] + box[2]) / 2
     third = frame_width / 3
     if cx < third:
@@ -40,18 +76,26 @@ def _side_hint(box, frame_width=640):
     else:
         return "ahead of you"
 
-def _sort_detections(detections):
+
+def _sort_detections(detections: List[Dict]) -> List[Dict]:
     priority = [d for d in detections if d["label"] in PRIORITY_LABELS]
-    normal   = [d for d in detections if d["label"] not in PRIORITY_LABELS and d["label"] not in LOW_PRIORITY_LABELS]
+    normal   = [d for d in detections if d["label"] not in PRIORITY_LABELS
+                                      and d["label"] not in LOW_PRIORITY_LABELS]
     low      = [d for d in detections if d["label"] in LOW_PRIORITY_LABELS]
     key = lambda d: -d["score"]
     return sorted(priority, key=key) + sorted(normal, key=key) + sorted(low, key=key)
 
-def build_narration(detections, relationships, frame_width=640, max_objects=5):
+
+def build_narration(
+    detections: List[Dict],
+    relationships: List[str],
+    frame_width: int = 640,
+    max_objects: int = 5,
+) -> str:
     if not detections:
         return "I don't see anything recognisable in the frame."
 
-    counts = Counter(d["label"] for d in detections)
+    counts      = Counter(d["label"] for d in detections)
     sorted_dets = _sort_detections(detections)
 
     seen_labels = {}
@@ -60,8 +104,9 @@ def build_narration(detections, relationships, frame_width=640, max_objects=5):
             seen_labels[det["label"]] = det
 
     top_labels = list(seen_labels.keys())[:max_objects]
-    phrases = [_count_phrase(label, counts[label]) for label in top_labels]
 
+    # ── Opening sentence ──────────────────────────────────────────────────
+    phrases = [_count_phrase(label, counts[label]) for label in top_labels]
     if len(phrases) == 1:
         opening = f"I can see {phrases[0]}."
     elif len(phrases) == 2:
@@ -69,19 +114,33 @@ def build_narration(detections, relationships, frame_width=640, max_objects=5):
     else:
         opening = "I can see " + ", ".join(phrases[:-1]) + f", and {phrases[-1]}."
 
+    # ── Direction + distance hints for priority objects ───────────────────
     direction_parts = []
     for label in top_labels:
         if label in PRIORITY_LABELS:
-            det = seen_labels[label]
-            count = counts[label]
-            side = _side_hint(det["box"], frame_width)
-            aliased = _alias(label)
-            noun = _pluralise(aliased, count) if count > 1 else aliased
-            article = "" if count > 1 else "The "
-            direction_parts.append(f"{article}{noun} {'are' if count > 1 else 'is'} {side}")
+            det      = seen_labels[label]
+            count    = counts[label]
+            side     = _side_hint(det["box"], frame_width)
+            aliased  = _alias(label)
+            noun     = _pluralise(aliased, count) if count > 1 else aliased
+            article  = "" if count > 1 else "The "
+            is_are   = "are" if count > 1 else "is"
+
+            # Use depth distance if available, otherwise just side
+            distance = det.get("distance")
+            if distance and distance in DISTANCE_PHRASES:
+                dist_phrase = DISTANCE_PHRASES[distance]
+                direction_parts.append(
+                    f"{article}{noun} {is_are} {dist_phrase}, {side}"
+                )
+            else:
+                direction_parts.append(
+                    f"{article}{noun} {is_are} {side}"
+                )
 
     direction_sentence = ". ".join(direction_parts) + "." if direction_parts else ""
 
+    # ── Relationship hints ────────────────────────────────────────────────
     relationship_sentence = ""
     if relationships:
         rel_phrases = []
@@ -98,9 +157,11 @@ def build_narration(detections, relationships, frame_width=640, max_objects=5):
     parts = [p for p in [opening, direction_sentence, relationship_sentence] if p]
     return " ".join(parts)
 
-def narrate_empty_frame():
+
+def narrate_empty_frame() -> str:
     return "The frame appears empty. No objects detected."
 
-def narrate_error(error_msg=""):
+
+def narrate_error(error_msg: str = "") -> str:
     base = "There was a problem analysing the image."
     return f"{base} {error_msg}".strip() if error_msg else base

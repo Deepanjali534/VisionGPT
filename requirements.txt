@@ -6,3 +6,6 @@ streamlit
 accelerate
 sentencepiece
 opencv-python
+pyttsx3
+SpeechRecognition
+PyAudio

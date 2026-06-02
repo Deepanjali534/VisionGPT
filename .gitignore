@@ -8,3 +8,4 @@ outputs/*.png
 *.pt
 *.bin
 .DS_Store
+outputs/
