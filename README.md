@@ -1,6 +1,6 @@
 # VisionGPT — Visual Assistant for the Visually Impaired
 
-VisionGPT started as an intelligent object detection agent. It has since been rebuilt into a real-world assistive tool — a visual assistant that describes your surroundings out loud and answers your questions about what it sees.
+VisionGPT is a real-world assistive tool that describes your surroundings out loud and answers your questions about what it sees — built for the visually impaired.
 
 > Point your camera at the world. VisionGPT tells you what's there.
 
@@ -8,9 +8,11 @@ VisionGPT started as an intelligent object detection agent. It has since been re
 
 ## What it does
 
-- **Describes your surroundings aloud** — "I can see a person on your left, close to a chair. There's also a car ahead of you."
+- **Describes your surroundings aloud** — "I can see a person very close to you on your left, and a car in the distance."
 - **Live webcam narration** — analyses the scene every few seconds and speaks only when something changes
-- **Voice Q&A** — ask a question out loud, get a spoken answer back — "What colour is the chair?" → "brown"
+- **Depth-aware descriptions** — tells you if objects are close, nearby, or far
+- **Hazard alerts** — immediately warns you when dangerous objects (cars, knives, people) are too close — "Warning. Car very close to you, on your right."
+- **Voice Q&A** — ask a question out loud, get a spoken answer back
 - **Text Q&A fallback** — type questions if you prefer
 - **High-contrast accessible UI** — large text, large buttons, keyboard-friendly layout
 
@@ -19,11 +21,12 @@ VisionGPT started as an intelligent object detection agent. It has since been re
 ## Models used
 
 | Task | Model |
-| ---- | ----- |
+|------|-------|
 | Object detection | [facebook/detr-resnet-50](https://huggingface.co/facebook/detr-resnet-50) |
 | Visual question answering | [Salesforce/blip-vqa-base](https://huggingface.co/Salesforce/blip-vqa-base) |
+| Depth estimation | [Intel/dpt-hybrid-midas](https://huggingface.co/Intel/dpt-hybrid-midas) |
 
-No model training involved — both models are pretrained and loaded directly from HuggingFace.
+No model training involved — all models are pretrained and downloaded automatically from HuggingFace on first run.
 
 ---
 
@@ -39,7 +42,9 @@ VisionGPT/
 │   │   ├── detector.py           # image → detected objects
 │   │   ├── scene_graph.py        # objects → spatial relationships
 │   │   ├── vqa.py                # image + question → answer
-│   │   └── narrator.py           # detections → natural spoken sentences
+│   │   ├── narrator.py           # detections → natural spoken sentences
+│   │   ├── depth.py              # depth estimation → close/nearby/far labels
+│   │   └── hazard.py             # hazard detection → warning sentences
 │   ├── tts/
 │   │   ├── __init__.py
 │   │   └── speaker.py            # TTS wrapper (pyttsx3 via subprocess)
@@ -103,6 +108,7 @@ Opens at `http://localhost:8501`. Features:
 - Or type a question in the text box and click **Ask**
 - Click **🔁 Repeat** to hear the last description or answer again
 - Use the slider to control how often the scene is described (2–10 seconds)
+- Hazard warnings play automatically — no action needed
 
 ### Original object detection UI
 
@@ -119,11 +125,16 @@ Upload any image or use the live webcam tab — see detected objects with boundi
 ```
 Webcam frame
       ↓
-DETR detects every object → bounding boxes
+DETR detects every object + bounding boxes
+      ↓
+MiDaS estimates depth → labels each object close / nearby / far
+      ↓
+Hazard check → speaks warning immediately if dangerous object is too close
       ↓
 Scene graph finds spatial relationships → "person near chair"
       ↓
-Narrator builds a natural sentence → "I can see a person on your left, near a chair."
+Narrator builds a natural sentence
+→ "I can see a person very close to you on your left, and a chair nearby."
       ↓
 pyttsx3 speaks it aloud (offline, no API key needed)
       ↓
@@ -131,6 +142,22 @@ User asks a question (voice or text)
       ↓
 BLIP answers from the image → spoken back via pyttsx3
 ```
+
+---
+
+## Hazard reference
+
+| Object | Triggers warning when |
+|--------|-----------------------|
+| Car, truck, bus | Close or nearby |
+| Motorcycle, bicycle | Close or nearby |
+| Person | Very close |
+| Dog | Very close |
+| Knife, scissors | Any distance |
+| Chair, table | Very close (tripping hazard) |
+| Fire hydrant | Very close (tripping hazard) |
+
+Warnings have a 10-second cooldown per object type to avoid spamming.
 
 ---
 
@@ -148,18 +175,11 @@ OUTPUT_DIR          = "outputs"
 
 ---
 
-## Requirements
+## First run note
 
-```
-torch
-torchvision
-transformers
-Pillow
-streamlit
-accelerate
-sentencepiece
-timm
-opencv-python
-pyttsx3
-SpeechRecognition
-```
+On first launch, three models will download automatically:
+- DETR (~160MB)
+- BLIP VQA (~900MB)
+- MiDaS (~490MB)
+
+This only happens once — models are cached locally after that.

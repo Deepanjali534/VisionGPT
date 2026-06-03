@@ -5,6 +5,7 @@ Pillow
 streamlit
 accelerate
 sentencepiece
+timm
 opencv-python
 pyttsx3
 SpeechRecognition
